@@ -1,18 +1,37 @@
 import asyncio
 import datetime
+import logging
 from pytz import timezone
 from dateutil.relativedelta import relativedelta
 from antigcast import Bot
 from pyrogram import filters
 from pyrogram.types import Message
 from antigcast.config import OWNER_ID
-from antigcast.helpers.tools import *
-from antigcast.helpers.database import *
+from antigcast.helpers.tools import get_arg
+from antigcast.helpers.database import (
+    list_sellers,
+    get_actived_chats,
+    add_actived_chat,
+    set_expired_date,
+    save_seller_info,
+    rem_actived_chat,
+    rem_expired_date,
+    add_seller,
+    rem_seller,
+    list_sellers,
+    get_expired_date,
+    get_seller_info
+)
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+
 
 async def is_seller(user_id):
     """Periksa apakah pengguna adalah penjual."""
     sellers = await list_sellers()
     return any(seller['_id'] == user_id for seller in sellers)
+
 
 @Bot.on_message(filters.command("addgc"))
 async def addgcmessag(app: Bot, message: Message):
@@ -21,40 +40,45 @@ async def addgcmessag(app: Bot, message: Message):
         return await message.reply("Anda tidak diizinkan untuk menggunakan perintah ini.")
     
     chat_id = message.chat.id
-    chat_name = message.chat.title
+    chat_name = message.chat.title or "Tidak diketahui"
     seller_id = message.from_user.id
-    username = message.from_user.username
+    username = message.from_user.username or "Tidak diketahui"
     name = message.from_user.first_name + (
         " " + message.from_user.last_name if message.from_user.last_name else ""
     )
+    
     hari = get_arg(message)
-    if not hari:
-        hari = "30"
+    try:
+        hari = int(hari) if hari else 30
+    except ValueError:
+        return await message.reply("Jumlah hari harus berupa angka.")
 
     xxnx = await message.reply("Menambahkan izin dalam grup ini...")
     now = datetime.datetime.now(timezone("Asia/Jakarta"))
-    expired = now + relativedelta(days=int(hari))
+    expired = now + relativedelta(days=hari)
     expired_date = expired.strftime("%d-%m-%Y")
-    
+
     chats = await get_actived_chats()
     if chat_id in chats:
         msg = await message.reply("Maaf, grup ini sudah diizinkan untuk menggunakan Bot.")
         await asyncio.sleep(10)
         await msg.delete()
         return
-    
+
     try:
         added = await add_actived_chat(chat_id)
         if added:
             await set_expired_date(chat_id, expired)
             await save_seller_info(chat_id, seller_id, username, name)
     except Exception as e:
-        print(e)
+        logging.error(f"Error adding group {chat_id}: {e}")
+        return await xxnx.edit("Terjadi kesalahan saat menambahkan grup.")
 
     await xxnx.edit(f"BOT AKTIF\nGrup : {chat_name}\nExp : {expired_date} | {hari} Hari..\nDitambahkan oleh: {name} (@{username})")
     await asyncio.sleep(10)
     await xxnx.delete()
     await message.delete()
+
 
 @Bot.on_message(filters.command("add"))
 async def addgroupmessag(app: Bot, message: Message):
@@ -63,7 +87,7 @@ async def addgroupmessag(app: Bot, message: Message):
         return await message.reply("Anda tidak diizinkan untuk menggunakan perintah ini.")
     
     seller_id = message.from_user.id
-    username = message.from_user.username
+    username = message.from_user.username or "Tidak diketahui"
     name = message.from_user.first_name + (
         " " + message.from_user.last_name if message.from_user.last_name else ""
     )
@@ -96,12 +120,13 @@ async def addgroupmessag(app: Bot, message: Message):
             await set_expired_date(chat_id, expired)
             await save_seller_info(chat_id, seller_id, username, name)
     except Exception as e:
-        print(e)
+        logging.error(f"Error adding group {chat_id}: {e}")
 
     await xxnx.edit(f"BOT AKTIF\nGroup ID: {group}\nExp : {expired_date} | {hari} Hari..\nDitambahkan oleh: {name} (@{username})")
     await asyncio.sleep(10)
     await xxnx.delete()
     await message.delete()
+
 
 @Bot.on_message(filters.command("rmgc") & filters.user(OWNER_ID))
 async def remgcmessag(app: Bot, message: Message):
@@ -120,12 +145,13 @@ async def remgcmessag(app: Bot, message: Message):
         await rem_actived_chat(chat_id)
         await rem_expired_date(chat_id)
     except Exception as e:
-        print(e)
+        logging.error(f"Error removing group {chat_id}: {e}")
 
     await xxnx.edit(f"Removed {chat_id} | Grup ini tidak diizinkan untuk menggunakan Bot.")
     await asyncio.sleep(10)
     await xxnx.delete()
     await message.delete()
+
 
 @Bot.on_message(filters.command("groups"))
 async def get_groupsmessag(app: Bot, message: Message):
@@ -171,6 +197,7 @@ async def get_groupsmessag(app: Bot, message: Message):
 
     await resp.edit(msg, disable_web_page_preview=True)
 
+
 @Bot.on_message(filters.command("addseller") & filters.user(OWNER_ID))
 async def addsellermessag(app: Bot, message: Message):
     """Menambahkan penjual baru."""
@@ -194,57 +221,49 @@ async def addsellermessag(app: Bot, message: Message):
         else:
             await xxnx.edit("Gagal menambahkan penjual.")
     except Exception as e:
-        print(f"Error adding seller: {e}")
+        logging.error(f"Error adding seller {seller_id}: {e}")
         await xxnx.edit("Terjadi kesalahan saat menambahkan penjual.")
         
-@Bot.on_message(filters.command("rmseller") & filters.user(OWNER_ID))
-async def remsellermessag(app: Bot, message: Message):
-    """Menghapus penjual."""
+
+@Bot.on_message(filters.command("delseller") & filters.user(OWNER_ID))
+async def delsellermessag(app: Bot, message: Message):
+    """Menghapus penjual dari daftar."""
+    xxnx = await message.reply("Menghapus penjual...")
+
     if message.reply_to_message:
         seller_id = message.reply_to_message.from_user.id
     elif len(message.command) == 2:
         try:
             seller_id = int(message.command[1])
         except ValueError:
-            return await message.reply("Seller ID harus berupa angka.")
+            return await xxnx.edit("Seller ID harus berupa angka.")
     else:
-        return await message.reply("Gunakan Format : /rmseller seller_id atau reply ke pesan user.")
+        return await xxnx.edit("Gunakan Format : /delseller seller_id atau reply ke pesan user.")
 
-    xxnx = await message.reply("Menghapus penjual...")
     try:
         removed = await rem_seller(seller_id)
         if removed:
-            await xxnx.edit(f"Penjual dengan Seller ID {seller_id} telah dihapus.")
+            await xxnx.edit(f"Penjual Dihapus\nSeller ID: {seller_id}")
         else:
-            await xxnx.edit(f"Penjual dengan Seller ID {seller_id} tidak ditemukan.")
+            await xxnx.edit("Penjual tidak ditemukan.")
     except Exception as e:
-        print(f"Error removing seller: {e}")
+        logging.error(f"Error removing seller {seller_id}: {e}")
         await xxnx.edit("Terjadi kesalahan saat menghapus penjual.")
 
-@Bot.on_message(filters.command("listsellers") & filters.user(OWNER_ID))
-async def listsellersmessage(app: Bot, message: Message):
+
+@Bot.on_message(filters.command("sellers") & filters.user(OWNER_ID))
+async def listsellermessag(app: Bot, message: Message):
     """Menampilkan daftar penjual yang terdaftar."""
+    xxnx = await message.reply("Memuat database...")
+
     sellers = await list_sellers()
     if not sellers:
-        return await message.reply("Belum ada penjual yang terdaftar.")
+        return await xxnx.edit("Tidak ada penjual yang terdaftar.")
 
-    resp = await message.reply("Memuat database...")
-    msg = f"Daftar Penjual\n\n"
-    num = 0
+    msg = "**Daftar Seller**\n\n"
+    for num, seller in enumerate(sellers, start=1):
+        added_at = seller.get("added_at", "Tidak diketahui")
+        added_at_str = added_at.strftime("%Y-%m-%d %H:%M:%S") if isinstance(added_at, datetime.datetime) else "Tidak diketahui"
+        msg += f"{num}. Seller ID: `{seller['_id']}`\n   Added at: {added_at_str}\n\n"
 
-    for seller in sellers:
-        seller_id = seller.get('_id')
-        added_at = seller.get('added_at')
-
-        if added_at:
-            added_at = added_at.astimezone(timezone('Asia/Jakarta')).strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            added_at = "Unknown"
-
-        num += 1
-        msg += (
-            f"{num}. Penjual ID: {seller_id}\n"
-            f"└ Ditambahkan pada: {added_at}\n\n"
-        )
-
-    await resp.edit(msg, disable_web_page_preview=True)
+    await xxnx.edit(msg)
